@@ -304,41 +304,29 @@ async function run() {
         res.status(500).send({ message: "Error rejecting club" });
       }
     });
-    // ==========================
-    // secure route
-    // ==========================
-    // app.patch(
-    //   "/users/make-admin/:email",
-    //   verifyToken,
-    //   verifyAdmin,
-    //   async (req, res) => {
-    //     const email = req.params.email;
-    //     const result = await userCollection.updateOne(
-    //       { email },
-    //       { $set: { role: "admin" } }
-    //     );
+    app.patch("/clubs/:id", async (req, res) => {
+      const { id } = req.params;
 
-    //     res.send({ message: "User Promoted to admin", result });
-    //   }
-    // );
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: "Invalid ID format" });
+      }
 
-    app.get("/admin/overview-stats", async (req, res) => {
       try {
-        const totalUsers = await userCollection.countDocuments();
-        const totalClubs = await clubCollection.countDocuments(); // total clubs count
-        console.log(totalClubs, totalUsers);
+        const updatedData = {
+          ...req.body,
+          updatedAt: new Date(),
+        };
 
-        res.send({ totalUsers, totalClubs });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: "Failed to fetch overview stats" });
+        const result = await clubCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updatedData }
+        );
+
+        res.send({ success: true, result });
+      } catch (err) {
+        res.status(500).send({ message: "Failed to update club" });
       }
     });
-
-    // ==============================
-    // eventCollection collection api
-    // ==============================
-    // Get all events
 
     const verifyClubManager = async (req, res, next) => {
       try {
@@ -361,6 +349,133 @@ async function run() {
         res.status(500).send({ message: "Server error" });
       }
     };
+
+    app.get(
+      "/manager/overview-stats",
+      verifyToken,
+      verifyClubManager,
+      async (req, res) => {
+        try {
+          const managerEmail = req.user.email;
+
+          // 1️⃣ Manager er clubs
+          const clubs = await clubCollection.find({ managerEmail }).toArray();
+
+          const clubIds = clubs.map((c) => c._id);
+
+          // 2️⃣ Total members (memberships)
+          const totalMembers = await membershipCollection.countDocuments({
+            clubId: { $in: clubIds },
+            status: "active",
+          });
+
+          // 3️⃣ Total events
+          const totalEvents = await eventCollection.countDocuments({
+            clubId: { $in: clubIds.map((id) => id.toString()) },
+          });
+
+          // 4️⃣ Total payments (paid only)
+          const paymentResult = await paymentCollection
+            .aggregate([
+              {
+                $match: {
+                  clubId: { $in: clubIds },
+                  status: "paid",
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalAmount: { $sum: "$amount" },
+                },
+              },
+            ])
+            .toArray();
+
+          const totalPayments = paymentResult[0]?.totalAmount || 0;
+
+          res.send({
+            clubsManaged: clubs.length,
+            totalMembers,
+            totalEvents,
+            totalPayments,
+          });
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({ message: "Failed to load manager stats" });
+        }
+      }
+    );
+
+    // ==========================
+    // secure route
+    // ==========================
+    // app.patch(
+    //   "/users/make-admin/:email",
+    //   verifyToken,
+    //   verifyAdmin,
+    //   async (req, res) => {
+    //     const email = req.params.email;
+    //     const result = await userCollection.updateOne(
+    //       { email },
+    //       { $set: { role: "admin" } }
+    //     );
+
+    //     res.send({ message: "User Promoted to admin", result });
+    //   }
+    // );
+
+    // app.get("/admin/overview-stats", async (req, res) => {
+    //   try {
+    //     const totalUsers = await userCollection.countDocuments();
+    //     const totalClubs = await clubCollection.countDocuments();
+    //     const totalMembership = await membershipCollection.countDocuments()
+    //     console.log(totalClubs, totalUsers);
+
+    //     res.send({ totalUsers, totalClubs, totalMembership });
+    //   } catch (error) {
+    //     console.error(error);
+    //     res.status(500).send({ message: "Failed to fetch overview stats" });
+    //   }
+    // });
+
+    app.get("/admin/overview-stats", async (req, res) => {
+      try {
+        const totalUsers = await userCollection.countDocuments();
+        const totalClubs = await clubCollection.countDocuments();
+        const totalMembership = await membershipCollection.countDocuments();
+
+        // ✅ Sum of all paid payments (membership + event)
+        const paymentResult = await paymentCollection
+          .aggregate([
+            { $match: { status: "paid" } }, // free বাদ
+            {
+              $group: {
+                _id: null,
+                totalAmount: { $sum: "$amount" },
+              },
+            },
+          ])
+          .toArray();
+
+        const totalPayments = paymentResult[0]?.totalAmount || 0;
+
+        res.send({
+          totalUsers,
+          totalClubs,
+          totalMembership,
+          totalPayments,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to fetch overview stats" });
+      }
+    });
+
+    // ==============================
+    // eventCollection collection api
+    // ==============================
+    // Get all events
 
     app.get("/users/role-info", async (req, res) => {
       try {
@@ -397,8 +512,6 @@ async function run() {
       }
     });
 
-    // Create new event
-    // server.js / index.js (Node.js)
     app.post("/events", async (req, res) => {
       try {
         const {
@@ -486,44 +599,25 @@ async function run() {
     // ==========================
     // payments method api
     // ==========================
-    // app.post("/create-payment-intent", verifyToken, async (req, res) => {
-    //   try {
-    //     const { amount } = req.body;
-
-    //     const paymentIntent = await stripe.paymentIntents.create({
-    //       amount: amount * 100, // dollar → cents
-    //       currency: "usd",
-    //       payment_method_types: ["card"],
-    //     });
-
-    //     res.send({
-    //       clientSecret: paymentIntent.client_secret,
-    //     });
-    //   } catch (error) {
-    //     res.status(500).send({ message: error.message });
-    //   }
-    // });
-
-
     app.post("/create-payment-intent", verifyToken, async (req, res) => {
-  try {
-    const { amount } = req.body;
+      try {
+        const { amount } = req.body;
 
-    if (!amount || amount <= 0) {
-      return res.status(400).send({ message: "Invalid amount" });
-    }
+        if (!amount || amount <= 0) {
+          return res.status(400).send({ message: "Invalid amount" });
+        }
 
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: amount * 100,
-      currency: "usd",
-      payment_method_types: ["card"],
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount * 100,
+          currency: "usd",
+          payment_method_types: ["card"],
+        });
+
+        res.send({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
     });
-
-    res.send({ clientSecret: paymentIntent.client_secret });
-  } catch (error) {
-    res.status(500).send({ message: error.message });
-  }
-});
 
     app.post("/payments", verifyToken, async (req, res) => {
       try {
