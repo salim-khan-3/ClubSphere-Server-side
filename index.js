@@ -120,31 +120,31 @@ async function run() {
       if (!user) return res.status(404).json({ message: "User not found" });
       res.json(user);
     });
-app.put("/users/:email", async (req, res) => {
-  try {
-    const email = req.params.email;
-    const { name, photoURL } = req.body;
+    app.patch("/users/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const { name, photoURL } = req.body;
 
-    if (!name && !photoURL) {
-      return res.status(400).json({ message: "No data to update" });
-    }
+        if (!name && !photoURL) {
+          return res.status(400).json({ message: "No data to update" });
+        }
 
-    const result = await userCollection.updateOne(
-      { email },
-      { $set: { name, photoURL, updatedAt: new Date() } }
-    );
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: { name, photoURL, updatedAt: new Date() } }
+        );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ message: "User not found" });
-    }
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
 
-    const updatedUser = await userCollection.findOne({ email });
-    res.json(updatedUser);
-  } catch (error) {
-    console.error("Update user error:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
+        const updatedUser = await userCollection.findOne({ email });
+        res.json(updatedUser);
+      } catch (error) {
+        console.error("Update user error:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
 
     // All users fetch (Admin only)
     app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
@@ -358,6 +358,8 @@ app.put("/users/:email", async (req, res) => {
         res.status(500).send({ message: "Failed to update club" });
       }
     });
+
+
 
     const verifyClubManager = async (req, res, next) => {
       try {
@@ -1420,6 +1422,42 @@ app.put("/users/:email", async (req, res) => {
         res.status(500).send({ message: "Failed to fetch payments" });
       }
     });
+
+
+   
+app.get("/admin/chart-data", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    
+    const chartData = await membershipCollection.aggregate([
+      {
+        $group: {
+          _id: "$clubId",
+          memberCount: { $sum: 1 }
+        }
+      },
+      {
+        $lookup: {
+          from: "clubs",
+          localField: "_id",
+          foreignField: "_id",
+          as: "clubDetails"
+        }
+      },
+      { $unwind: "$clubDetails" },
+      {
+        $project: {
+          name: "$clubDetails.clubName",
+          value: "$memberCount",
+          _id: 0
+        }
+      }
+    ]).toArray();
+
+    res.send(chartData);
+  } catch (error) {
+    res.status(500).send({ message: "Failed to fetch chart data" });
+  }
+});
 
     await client.db("admin").command({ ping: 1 });
     console.log(
