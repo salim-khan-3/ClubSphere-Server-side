@@ -114,6 +114,32 @@ async function run() {
         res.status(500).send({ error: err.message });
       }
     });
+        app.get("/users/role-info", async (req, res) => {
+      try {
+        const { email } = req.query;
+
+        if (!email) {
+          return res.status(400).send({ message: "Email is required" });
+        }
+
+        // find user by email
+        const user = await userCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        // response
+        res.send({
+          email: user.email,
+          role: user.role,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
     app.get("/users/:email", async (req, res) => {
       const email = req.params.email;
       const user = await userCollection.findOne({ email });
@@ -146,8 +172,7 @@ async function run() {
       }
     });
 
-    // All users fetch (Admin only)
-    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
+    app.get("/users", verifyToken, async (req, res) => {
       try {
         const users = await userCollection.find().toArray();
         res.send(users);
@@ -358,8 +383,6 @@ async function run() {
         res.status(500).send({ message: "Failed to update club" });
       }
     });
-
-
 
     const verifyClubManager = async (req, res, next) => {
       try {
@@ -756,31 +779,6 @@ async function run() {
       }
     );
 
-    app.get("/users/role-info", async (req, res) => {
-      try {
-        const { email } = req.query;
-
-        if (!email) {
-          return res.status(400).send({ message: "Email is required" });
-        }
-
-        // find user by email
-        const user = await userCollection.findOne({ email });
-
-        if (!user) {
-          return res.status(404).send({ message: "User not found" });
-        }
-
-        // response
-        res.send({
-          email: user.email,
-          role: user.role,
-        });
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: "Server error" });
-      }
-    });
 
     app.get("/events", async (req, res) => {
       try {
@@ -791,7 +789,8 @@ async function run() {
       }
     });
 
-    app.post("/events", async (req, res) => {
+    // আপনার ব্যাকেন্ডে এই রাউটটি আপডেট করুন
+    app.post("/events", verifyToken, async (req, res) => {
       try {
         const {
           title,
@@ -805,8 +804,9 @@ async function run() {
           clubName,
         } = req.body;
 
-        if (!clubId)
+        if (!clubId) {
           return res.status(400).send({ message: "Club ID is required" });
+        }
 
         const newEvent = {
           title,
@@ -814,11 +814,12 @@ async function run() {
           date,
           location,
           isPaid,
-          eventFee,
-          maxAttendees,
-          clubId, // save club id
-          createdAt: new Date(),
+          eventFee: isPaid ? Number(eventFee) : 0,
+          maxAttendees: Number(maxAttendees) || 0,
+          clubId,
           clubName,
+          createdAt: new Date(),
+          createdBy: req.user.email, // টোকেন থেকে ইমেইল স্টোর করা
         };
 
         const result = await eventCollection.insertOne(newEvent);
@@ -828,6 +829,7 @@ async function run() {
         res.status(500).send({ message: "Failed to create event" });
       }
     });
+
     app.patch(
       "/events/:id",
       verifyToken,
@@ -1423,41 +1425,59 @@ async function run() {
       }
     });
 
+    app.get("/admin/chart-data", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const chartData = await membershipCollection
+          .aggregate([
+            {
+              $group: {
+                _id: "$clubId",
+                memberCount: { $sum: 1 },
+              },
+            },
+            {
+              $lookup: {
+                from: "clubs",
+                localField: "_id",
+                foreignField: "_id",
+                as: "clubDetails",
+              },
+            },
+            { $unwind: "$clubDetails" },
+            {
+              $project: {
+                name: "$clubDetails.clubName",
+                value: "$memberCount",
+                _id: 0,
+              },
+            },
+          ])
+          .toArray();
 
-   
-app.get("/admin/chart-data", verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    
-    const chartData = await membershipCollection.aggregate([
-      {
-        $group: {
-          _id: "$clubId",
-          memberCount: { $sum: 1 }
-        }
-      },
-      {
-        $lookup: {
-          from: "clubs",
-          localField: "_id",
-          foreignField: "_id",
-          as: "clubDetails"
-        }
-      },
-      { $unwind: "$clubDetails" },
-      {
-        $project: {
-          name: "$clubDetails.clubName",
-          value: "$memberCount",
-          _id: 0
-        }
+        res.send(chartData);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch chart data" });
       }
-    ]).toArray();
+    });
+    // app.get("/users/role-info", async (req, res) => {
+    //   try {
+    //     const email = req.query.email;
 
-    res.send(chartData);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to fetch chart data" });
-  }
-});
+    //     if (!email) {
+    //       return res.status(400).send({ message: "Email is required" });
+    //     }
+
+    //     const user = await userCollection.findOne({ email });
+
+    //     if (!user) {
+    //       return res.status(404).send({ message: "User not found" });
+    //     }
+
+    //     res.send({ role: user.role });
+    //   } catch (error) {
+    //     res.status(500).send({ message: "Failed to fetch user role" });
+    //   }
+    // });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
